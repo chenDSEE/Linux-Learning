@@ -100,26 +100,10 @@ SigCgt:	0000000000000002
 [root@LC viper]# 
 ```
 
-
-
-
-
 - disposition 的设置，将会改变 default action，从 default action 变成了 caught 了嘛
-
 - 所谓的 action 是这个进程对不同信号会做什么，具体的做法要告诉操作系统，这样操作系统才能帮进程表达出相应的 action 行为
 - disposition 通常是 caught action，Linux 操作系统将会帮你把 signal 给到相应的 handler 进行响应处理
-
-
-
-
-
-
-
-
-
-
-
-
+- 代码中设置的 `SigIgn` 理解为 disposition 其实更好
 
 
 
@@ -153,37 +137,6 @@ SigCgt:	0000000000000002
 
 
 
-# signal set
-
-- signal 是一个个 signal 处理、设置，但是 signal set 则是一批 signal 一起设置
-- 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -191,6 +144,22 @@ SigCgt:	0000000000000002
 
 
 ## Q&A
+
+### 一个 signal 的流程是怎样的？
+
+- 硬件、软件发起一个 signal，并通过 thread-id 或者是 process-id 发给执行的线程或者是进程组
+- 操作系统接收到 signal 的发起，并通过 thread-id、process-id 将 signal 发送给相应的线程、进程
+- 首先操作系统先检查接受 signal 的线程，对这个 signal 有没什么特殊的设置：
+  - 有没有 ignore（`SigIgn`），有的话，不传递这个 signal 给整个进程
+  - 有没有设置 disposition？有的话看看整个进程组中哪个线程可以进行处理（同时，`SigCgt` 会置位相应的 bit）
+  - 有没有设置 block、或者是因为正在处理同一个 signal 导致 block；直到 unblock 操作系统才会将这个 signal delivery 给进程
+  - 这个进程有没有相同的 signal 正在 pending 排队，有的话，drop 这个还没 delivery 给进程的 signale（pending 的时候，`SigPnd`、`ShdPnd` 会置位相应的 bit）
+- 操作系统将 signal delivery 给进程，并且设置相应的 `SigBlk` 以阻止相同 signal 再次传递给进程
+- 进程开始处理 signal，调用 signal handler
+- 进程完成 signal 的处理，退出 signal hander
+- 操作系统将相应的  `SigBlk` bit 清空，表明这个进程可以接受下一个相同的 signal
+
+
 
 ### 什么时候操作系统会给进程发送信号？
 
@@ -256,14 +225,47 @@ SigCgt:	0000000000000002
 
 ### 多线程与信号
 
-- （signal hander 是全部线程共享的）Signal dispositions are process-wide; all threads in a process share the same disposition for each signal.
+> TLPI section 33.2
+
+- 多线程 + 信号构建程序模型的话，将会令代码变得复杂、较难预测，如非必要，建议避免使用太多信号
+
+
+
+**process-wide VS thread-wide**
+
+> thread-wide 是指，同一个 process 里面的不同 thread
+
+porcess-wide:
+
+- Signal action（default action，stop、terminate）
+- Signal dispositions（也就是 signal handler，其实这个 signal 可以理解为变成了 caught）
+
+
+
+- （signal hander 是全部线程共享的，全部线程使用同一个 signal handler）Signal dispositions are process-wide; all threads in a process share the same disposition for each signal.
   - Similarly, if one thread sets the disposition of a signal to ignore, then that signal is ignored by all threads.
 - Signal actions are process-wide. 是指 action 的影响范围，而不是所有 thread 都采用相同的 action
 - When a new thread is created, it inherits a copy of the signal mask of the thread that created it. 
+- The signal mask is per-thread. signal mask 特指：**The Signal Mask (Blocking Signal Delivery)**；也就意味着，不同的 thread 可以独立 block 不同的 signal，这样这个 thread 在 block 的期间，就永远不会收到这个 signal 了
+  -  Threads can independently block or unblock different signals using pthread_sigmask()
+  - By manipulating the per-thread signal masks, an application can control which thread(s) may handle a signal that is directed to the whole process.
+  - When a new thread is created, it inherits a copy of the signal mask of the thread that created it. 
+- signal 是可以打断 mutex 的，为了修复这个问题，mutex 将会进行重试
 
 
 
 
+
+
+
+
+
+**什么情况下，signal 会只给一个 thread？**
+
+- SIGBUS, SIGFPE, SIGILL, and SIGSEGV 这种硬件信号发生的时候，会准确传给触发这个 signal 的 thread
+- it is a SIGPIPE signal generated when the thread tried to write to a broken pipe
+- 通过 thread id 发送的信号
+- 其他情况下，signal 一般是看 process 里面哪个 thread 有空，就给哪个（前提是你这个 thread 没有 block 这个 signal）
 
 
 
